@@ -137,6 +137,15 @@ class GpuIndex : public faiss::Index {
     /// All data is guaranteed to be resident on our device
     virtual void addImpl_(idx_t n, const float* x, const idx_t* ids) = 0;
 
+    // Extended addImpl_
+virtual void addImpl_(idx_t n, const void* x, NumericType x_type, const idx_t* ids) {
+        if (x_type == NumericType::Float32) {
+            addImpl_(n, static_cast<const float*>(x), ids);  // Call original function for Float32
+        } else {
+            throw std::runtime_error("GpuIndex::addImpl_: unsupported numeric type");
+        }
+    }
+
     /// Overridden to actually perform the search
     /// All data is guaranteed to be resident on our device
     virtual void searchImpl_(
@@ -147,13 +156,45 @@ class GpuIndex : public faiss::Index {
             idx_t* labels,
             const SearchParameters* params) const = 0;
 
+            // Extended searchImpl_
+virtual void searchImpl_(
+        idx_t n,
+        const void* x,
+        NumericType x_type,
+        int k,
+        float* distances,
+        idx_t* labels,
+        const SearchParameters* params) const {
+        if (x_type == faiss::NumericType::Float32) {
+            searchImpl_(n, static_cast<const float*>(x), k, distances, labels, params);  // Call original function for Float32
+        } else {
+            throw std::runtime_error("GpuIndex::searchImpl_: unsupported numeric type");
+        }
+    }
+
    private:
     /// Handles paged adds if the add set is too large, passes to
     /// addImpl_ to actually perform the add for the current page
     void addPaged_(idx_t n, const float* x, const idx_t* ids);
 
+    void addPaged_(idx_t n, const void* x, NumericType x_type, const idx_t* ids) {
+        if (x_type == NumericType::Float32) {
+            addPaged_(n, static_cast<const float*>(x), ids);  // Use the original addPaged_ for Float32
+        } else {
+            throw std::runtime_error("GpuIndex::addPaged_: unsupported numeric type");
+        }
+    }
+
     /// Calls addImpl_ for a single page of GPU-resident data
     void addPage_(idx_t n, const float* x, const idx_t* ids);
+
+    void addPage_(idx_t n, const void* x, NumericType x_type, const idx_t* ids) {
+        if (x_type == NumericType::Float32) {
+            addPage_(n, static_cast<const float*>(x), ids);  // Use the original addPage_ for Float32
+        } else {
+            throw std::runtime_error("GpuIndex::addPage_: unsupported numeric type");
+        }
+    }
 
     /// Calls searchImpl_ for a single page of GPU-resident data
     void searchNonPaged_(
@@ -164,6 +205,21 @@ class GpuIndex : public faiss::Index {
             idx_t* outIndicesData,
             const SearchParameters* params) const;
 
+            void searchNonPaged_(
+                idx_t n,
+                const void* x,
+                NumericType x_type,
+                int k,
+                float* outDistancesData,
+                idx_t* outIndicesData,
+                const SearchParameters* params) const {
+                if (x_type == NumericType::Float32) {
+                    searchNonPaged_(n, static_cast<const float*>(x), k, outDistancesData, outIndicesData, params);  // Use original searchNonPaged_ for Float32
+                } else {
+                    throw std::runtime_error("GpuIndex::searchNonPaged_: unsupported numeric type");
+                }
+            }
+
     /// Calls searchImpl_ for a single page of GPU-resident data,
     /// handling paging of the data and copies from the CPU
     void searchFromCpuPaged_(
@@ -173,6 +229,21 @@ class GpuIndex : public faiss::Index {
             float* outDistancesData,
             idx_t* outIndicesData,
             const SearchParameters* params) const;
+
+            void searchFromCpuPaged_(
+                idx_t n,
+                const void* x,
+                NumericType x_type,
+                int k,
+                float* outDistancesData,
+                idx_t* outIndicesData,
+                const SearchParameters* params) const {
+                if (x_type == NumericType::Float32) {
+                    searchFromCpuPaged_(n, static_cast<const float*>(x), k, outDistancesData, outIndicesData, params);  // Use original searchFromCpuPaged_ for Float32
+                } else {
+                    throw std::runtime_error("GpuIndex::searchFromCpuPaged_: unsupported numeric type");
+                }
+            }
 
    protected:
     /// Manages streams, cuBLAS handles and scratch memory for devices

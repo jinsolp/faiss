@@ -68,6 +68,14 @@ struct SearchParameters {
     virtual ~SearchParameters() {}
 };
 
+/** 
+* Numeric Types for extended API supporting FP16 (and potentially other types)
+ */
+enum class NumericType {
+        Float32,
+        Float16
+};
+
 /** Abstract structure for an index, supports adding vectors and searching
  * them.
  *
@@ -107,6 +115,15 @@ struct Index {
      */
     virtual void train(idx_t n, const float* x);
 
+    // Extended train
+    virtual void train(idx_t n, const void* x, NumericType x_type) {
+        if (x_type == NumericType::Float32) {
+            train(n, static_cast<const float*>(x));
+        } else {
+            throw std::runtime_error("Index::train: unsupported numeric type");
+        }
+    }
+
     /** Add n vectors of dimension d to the index.
      *
      * Vectors are implicitly assigned labels ntotal .. ntotal + n - 1
@@ -116,6 +133,15 @@ struct Index {
      * @param x      input matrix, size n * d
      */
     virtual void add(idx_t n, const float* x) = 0;
+
+    // Extended add
+    virtual void add(idx_t n, const void* x, NumericType x_type) {
+        if (x_type == NumericType::Float32) {
+            add(n, static_cast<const float*>(x));
+        } else {
+            throw std::runtime_error("Index::add: unsupported numeric type");
+        }
+     }
 
     /** Same as add, but stores xids instead of sequential ids.
      *
@@ -127,6 +153,15 @@ struct Index {
      * @param xids      if non-null, ids to store for the vectors (size n)
      */
     virtual void add_with_ids(idx_t n, const float* x, const idx_t* xids);
+
+    // Extended add_with_ids
+virtual void add_with_ids(idx_t n, const void* x, NumericType x_type, const idx_t* xids) {
+        if (x_type == NumericType::Float32) {
+            add_with_ids(n, static_cast<const float*>(x), xids);
+        } else {
+            throw std::runtime_error("Index::add_with_ids: unsupported numeric type");
+        }
+    }
 
     /** query n vectors of dimension d to the index.
      *
@@ -146,6 +181,22 @@ struct Index {
             float* distances,
             idx_t* labels,
             const SearchParameters* params = nullptr) const = 0;
+
+// Extended search
+virtual void search(
+        idx_t n,
+        const void* x,
+        NumericType x_type,
+        idx_t k,
+        float* distances,
+        idx_t* labels,
+        const SearchParameters* params = nullptr) const {
+        if (x_type == NumericType::Float32) {
+            search(n, static_cast<const float*>(x), k, distances, labels, params);
+        } else {
+            throw std::runtime_error("Index::search: unsupported numeric type");
+        }
+    }
 
     /** query n vectors of dimension d to the index.
      *
@@ -176,6 +227,15 @@ struct Index {
      */
     virtual void assign(idx_t n, const float* x, idx_t* labels, idx_t k = 1)
             const;
+
+// Extended assign
+virtual void assign(idx_t n, const void* x, NumericType x_type, idx_t* labels, idx_t k = 1) const {
+        if (x_type == NumericType::Float32) {
+            assign(n, static_cast<const float*>(x), labels, k);
+        } else {
+            throw std::runtime_error("Index::assign: unsupported numeric type");
+        }
+    }
 
     /// removes all elements from the database.
     virtual void reset() = 0;
@@ -235,6 +295,23 @@ struct Index {
             float* recons,
             const SearchParameters* params = nullptr) const;
 
+            // Extended search_and_reconstruct
+virtual void search_and_reconstruct(
+        idx_t n,
+        const void* x,
+        NumericType x_type,
+        idx_t k,
+        float* distances,
+        idx_t* labels,
+        float* recons,
+        const SearchParameters* params = nullptr) const {
+        if (x_type == NumericType::Float32) {
+            search_and_reconstruct(n, static_cast<const float*>(x), k, distances, labels, recons, params);
+        } else {
+            throw std::runtime_error("Index::search_and_reconstruct: unsupported numeric type");
+        }
+    }
+
     /** Computes a residual vector after indexing encoding.
      *
      * The residual vector is the difference between a vector and the
@@ -248,6 +325,15 @@ struct Index {
      */
     virtual void compute_residual(const float* x, float* residual, idx_t key)
             const;
+
+            // Extended compute_residual
+virtual void compute_residual(const void* x, NumericType x_type, float* residual, idx_t key) const {
+        if (x_type == NumericType::Float32) {
+            compute_residual(static_cast<const float*>(x), residual, key);
+        } else {
+            throw std::runtime_error("Index::compute_residual: unsupported numeric type");
+        }
+    }
 
     /** Computes a residual vector after indexing encoding (batch form).
      * Equivalent to calling compute_residual for each vector.
@@ -267,6 +353,20 @@ struct Index {
             const float* xs,
             float* residuals,
             const idx_t* keys) const;
+
+            // Extended compute_residual_n
+            virtual void compute_residual_n(
+                idx_t n,
+                const void* xs,
+                NumericType x_type,
+                float* residuals,
+                const idx_t* keys) const {
+                if (x_type == NumericType::Float32) {
+                    compute_residual_n(n, static_cast<const float*>(xs), residuals, keys);
+                } else {
+                    throw std::runtime_error("Index::compute_residual_n: unsupported numeric type");
+                }
+            }
 
     /** Get a DistanceComputer (defined in AuxIndexStructures) object
      * for this kind of index.
@@ -289,6 +389,16 @@ struct Index {
      */
     virtual void sa_encode(idx_t n, const float* x, uint8_t* bytes) const;
 
+
+// Extended sa_encode
+virtual void sa_encode(idx_t n, const void* x, NumericType x_type, uint8_t* bytes) const {
+        if (x_type == NumericType::Float32) {
+            sa_encode(n, static_cast<const float*>(x), bytes);
+        } else {
+            throw std::runtime_error("Index::sa_encode: unsupported numeric type");
+        }
+    }
+
     /** decode a set of vectors
      *
      * @param n       number of vectors
@@ -296,6 +406,19 @@ struct Index {
      * @param x       output vectors, size n * d
      */
     virtual void sa_decode(idx_t n, const uint8_t* bytes, float* x) const;
+
+    // Extended sa_decode
+    virtual void sa_decode(
+        idx_t n,
+        const uint8_t* bytes,
+        void* x,
+        NumericType x_type) const {
+        if (x_type == NumericType::Float32) {
+            sa_decode(n, bytes, static_cast<float*>(x));
+        } else {
+            throw std::runtime_error("Index::sa_decode: unsupported numeric type");
+        }
+    }
 
     /** moves the entries from another dataset to self.
      * On output, other is empty.

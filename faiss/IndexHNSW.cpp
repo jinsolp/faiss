@@ -19,6 +19,7 @@
 #include <random>
 
 #include <cstdint>
+#include "faiss/Index.h"
 
 #include <faiss/Index2Layer.h>
 #include <faiss/IndexFlat.h>
@@ -51,11 +52,12 @@ DistanceComputer* storage_distance_computer(const Index* storage) {
     }
 }
 
+template <typename data_t = float>
 void hnsw_add_vertices(
         IndexHNSW& index_hnsw,
         size_t n0,
         size_t n,
-        const float* x,
+        const data_t* x,
         bool verbose,
         bool preset_levels = false) {
     size_t d = index_hnsw.d;
@@ -329,16 +331,26 @@ void IndexHNSW::range_search(
     }
 }
 
-void IndexHNSW::add(idx_t n, const float* x) {
+void IndexHNSW::add(idx_t n, const void* x, NumericType numeric_type ) {
     FAISS_THROW_IF_NOT_MSG(
             storage,
             "Please use IndexHNSWFlat (or variants) instead of IndexHNSW directly");
     FAISS_THROW_IF_NOT(is_trained);
     int n0 = ntotal;
-    storage->add(n, x);
+    // storage->add(n, x, numeric_type);
+    storage->add(n, static_cast<const float*>(x));
     ntotal = storage->ntotal;
 
-    hnsw_add_vertices(*this, n0, n, x, verbose, hnsw.levels.size() == ntotal);
+    if (numeric_type == NumericType::Float32) {
+        hnsw_add_vertices<float>(*this, n0, n, static_cast<const float*>(x), verbose, hnsw.levels.size() == ntotal);
+    } 
+    // else {
+    //     hnsw_add_vertices<half>(*this, n0, n, static_cast<const half*>(x), verbose, hnsw.levels.size() == ntotal);
+    // }
+}
+
+void IndexHNSW::add(idx_t n, const float* x) {
+    add(n, static_cast<const void*>(x), NumericType::Float32);
 }
 
 void IndexHNSW::reset() {
@@ -908,6 +920,14 @@ IndexHNSWCagra::IndexHNSWCagra(int d, int M, MetricType metric)
     keep_max_size_level0 = true;
 }
 
+void IndexHNSWCagra::add(idx_t n, const void* x, NumericType numeric_type) {
+    FAISS_THROW_IF_NOT_MSG(
+            !base_level_only,
+            "Cannot add vectors when base_level_only is set to True");
+
+    IndexHNSW::add(n, static_cast<const float*>(x));
+}
+
 void IndexHNSWCagra::add(idx_t n, const float* x) {
     FAISS_THROW_IF_NOT_MSG(
             !base_level_only,
@@ -918,13 +938,14 @@ void IndexHNSWCagra::add(idx_t n, const float* x) {
 
 void IndexHNSWCagra::search(
         idx_t n,
-        const float* x,
+        const void* x,
+        NumericType numeric_type,
         idx_t k,
         float* distances,
         idx_t* labels,
         const SearchParameters* params) const {
     if (!base_level_only) {
-        IndexHNSW::search(n, x, k, distances, labels, params);
+        IndexHNSW::search(n, static_cast<const float*>(x), k, distances, labels, params);
     } else {
         std::vector<storage_idx_t> nearest(n);
         std::vector<float> nearest_d(n);
@@ -933,7 +954,7 @@ void IndexHNSWCagra::search(
         for (idx_t i = 0; i < n; i++) {
             std::unique_ptr<DistanceComputer> dis(
                     storage_distance_computer(this->storage));
-            dis->set_query(x + i * d);
+            dis->set_query(static_cast<const float*>(x) + i * d);
             nearest[i] = -1;
             nearest_d[i] = std::numeric_limits<float>::max();
 
@@ -955,7 +976,7 @@ void IndexHNSWCagra::search(
 
         search_level_0(
                 n,
-                x,
+                static_cast<const float*>(x),
                 k,
                 nearest.data(),
                 nearest_d.data(),
@@ -965,6 +986,16 @@ void IndexHNSWCagra::search(
                 1, // search_type
                 params);
     }
+}
+
+void IndexHNSWCagra::search(
+    idx_t n,
+    const float* x,
+    idx_t k,
+    float* distances,
+    idx_t* labels,
+    const SearchParameters* params) const {
+IndexHNSWCagra::search(n, static_cast<const void*>(x), NumericType::Float32, k, distances, labels, params);
 }
 
 } // namespace faiss

@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <faiss/gpu/impl/CuvsCagra.cuh>
 #include <optional>
+#include <type_traits>
 
 namespace faiss {
 namespace gpu {
@@ -41,14 +42,17 @@ GpuIndexCagra::GpuIndexCagra(
     this->is_trained = false;
 }
 
-void GpuIndexCagra::train(idx_t n, const float* x) {
+void GpuIndexCagra::train(idx_t n, const void* x, NumericType numeric_type) {
+    bool index_is_initialized = !std::holds_alternative<std::monostate>(index_);
+
     DeviceScope scope(config_.device);
     if (this->is_trained) {
-        FAISS_ASSERT(index_);
+        FAISS_ASSERT(index_is_initialized);
         return;
     }
 
-    FAISS_ASSERT(!index_);
+    // CuvsCagra not initialized
+    FAISS_ASSERT(!index_is_initialized);
 
     std::optional<cuvs::neighbors::ivf_pq::index_params> ivf_pq_params =
             std::nullopt;
@@ -82,7 +86,10 @@ void GpuIndexCagra::train(idx_t n, const float* x) {
         ivf_pq_search_params->preferred_shmem_carveout =
                 cagraConfig_.ivf_pq_search_params->preferred_shmem_carveout;
     }
-    index_ = std::make_shared<CuvsCagra>(
+    
+    // Do like this for now and think of cleanup later
+    if (numeric_type == NumericType::Float32) {
+        index_ = std::make_shared<CuvsCagra<float>>(
             this->resources_.get(),
             this->d,
             cagraConfig_.intermediate_graph_degree,
@@ -96,15 +103,44 @@ void GpuIndexCagra::train(idx_t n, const float* x) {
             ivf_pq_params,
             ivf_pq_search_params,
             cagraConfig_.refine_rate);
+        std::get<std::shared_ptr<CuvsCagra<float>>>(index_)->train(n, static_cast<const float*>(x));
+    } else if (numeric_type == NumericType::Float16) {
 
-    index_->train(n, x);
-
+        std::cout << "train for fp16\n";
+        index_ = std::make_shared<CuvsCagra<half>>(
+            this->resources_.get(),
+            this->d,
+            cagraConfig_.intermediate_graph_degree,
+            cagraConfig_.graph_degree,
+            static_cast<faiss::cagra_build_algo>(cagraConfig_.build_algo),
+            cagraConfig_.nn_descent_niter,
+            cagraConfig_.store_dataset,
+            this->metric_type,
+            this->metric_arg,
+            INDICES_64_BIT,
+            ivf_pq_params,
+            ivf_pq_search_params,
+            cagraConfig_.refine_rate);
+        std::get<std::shared_ptr<CuvsCagra<half>>>(index_)->train(n, static_cast<const half*>(x));
+        std::cout << "done training half types in GpuIndexCagra.cu\n";
+    } else {
+        FAISS_THROW_MSG("GpuIndexCagra::train unsupported data type");
+    }
+    
     this->is_trained = true;
     this->ntotal = n;
 }
 
+void GpuIndexCagra::train(idx_t n, const float* x) {
+    train(n, static_cast<const void*>(x), NumericType::Float32);
+}
+
+void GpuIndexCagra::add(idx_t n, const void* x, NumericType numeric_type) {
+    train(n, x, numeric_type);
+}
+
 void GpuIndexCagra::add(idx_t n, const float* x) {
-    train(n, x);
+    add(n, x, NumericType::Float32);
 }
 
 bool GpuIndexCagra::addImplRequiresIDs_() const {
@@ -117,15 +153,18 @@ void GpuIndexCagra::addImpl_(idx_t n, const float* x, const idx_t* ids) {
 
 void GpuIndexCagra::searchImpl_(
         idx_t n,
-        const float* x,
+        const void* x,
+        NumericType numeric_type,
         int k,
         float* distances,
         idx_t* labels,
         const SearchParameters* search_params) const {
-    FAISS_ASSERT(this->is_trained && index_);
+    // Asserting index is trained and check if holding a proper CuvsCagra instance
+    FAISS_ASSERT(this->is_trained && !std::holds_alternative<std::monostate>(index_));
     FAISS_ASSERT(n > 0);
 
-    Tensor<float, 2, true> queries(const_cast<float*>(x), {n, this->d});
+    if (numeric_type == NumericType::Float32) {
+    Tensor<float, 2, true> queries(const_cast<float*>(static_cast<const float*>(x)), {n, this->d});
     Tensor<float, 2, true> outDistances(distances, {n, k});
     Tensor<idx_t, 2, true> outLabels(const_cast<idx_t*>(labels), {n, k});
 
@@ -137,7 +176,7 @@ void GpuIndexCagra::searchImpl_(
         params = new SearchParametersCagra{};
     }
 
-    index_->search(
+    std::get<std::shared_ptr<CuvsCagra<float>>>(index_)->search(
             queries,
             k,
             outDistances,
@@ -155,22 +194,66 @@ void GpuIndexCagra::searchImpl_(
             params->hashmap_max_fill_rate,
             params->num_random_samplings,
             params->seed);
-
-    if (not search_params) {
-        delete params;
+            if (not search_params) {
+                delete params;
+            }
+    } else {
+        Tensor<half, 2, true> queries(const_cast<half*>(static_cast<const half*>(x)), {n, this->d});
+        Tensor<float, 2, true> outDistances(distances, {n, k});
+        Tensor<idx_t, 2, true> outLabels(const_cast<idx_t*>(labels), {n, k});
+    
+        SearchParametersCagra* params;
+        if (search_params) {
+            params = dynamic_cast<SearchParametersCagra*>(
+                    const_cast<SearchParameters*>(search_params));
+        } else {
+            params = new SearchParametersCagra{};
+        }
+    
+        std::get<std::shared_ptr<CuvsCagra<half>>>(index_)->search(
+                queries,
+                k,
+                outDistances,
+                outLabels,
+                params->max_queries,
+                params->itopk_size,
+                params->max_iterations,
+                static_cast<faiss::cagra_search_algo>(params->algo),
+                params->team_size,
+                params->search_width,
+                params->min_iterations,
+                params->thread_block_size,
+                static_cast<faiss::cagra_hash_mode>(params->hashmap_mode),
+                params->hashmap_min_bitlen,
+                params->hashmap_max_fill_rate,
+                params->num_random_samplings,
+                params->seed);
+                if (not search_params) {
+                    delete params;
+                }
     }
 }
 
-void GpuIndexCagra::copyFrom(const faiss::IndexHNSWCagra* index) {
+void GpuIndexCagra::searchImpl_(
+    idx_t n,
+    const float* x,
+    int k,
+    float* distances,
+    idx_t* labels,
+    const SearchParameters* search_params) const {
+        searchImpl_(n, static_cast<const void*>(x), NumericType::Float32, k, distances, labels, search_params);
+    }
+
+void GpuIndexCagra::copyFrom(const faiss::IndexHNSWCagra* index, NumericType numeric_type) {
     FAISS_ASSERT(index);
 
     DeviceScope scope(config_.device);
 
-    GpuIndex::copyFrom(index);
+    GpuIndex::copyFrom(index);  // this is fine
 
-    auto base_index = dynamic_cast<IndexFlat*>(index->storage);
+    auto base_index = dynamic_cast<IndexFlat*>(index->storage); // the storage is Index class but it's IndexFlat?
     FAISS_ASSERT(base_index);
-    auto distances = base_index->get_xb();
+    // auto dataset = base_index->get_xb();
 
     auto hnsw = index->hnsw;
     // copy level 0 to a dense knn graph matrix
@@ -188,22 +271,43 @@ void GpuIndexCagra::copyFrom(const faiss::IndexHNSWCagra* index) {
         }
     }
 
-    index_ = std::make_shared<CuvsCagra>(
+    if(numeric_type == NumericType::Float32) {
+        auto dataset = base_index->get_xb();    // this is actually float* casted MaybeOwnedVector<uint8_t>
+        index_ = std::make_shared<CuvsCagra<float>>(
             this->resources_.get(),
             this->d,
             index->ntotal,
             hnsw.nb_neighbors(0),
-            distances,
+            dataset,
             knn_graph.data(),
             this->metric_type,
             this->metric_arg,
             INDICES_64_BIT);
+    } 
+    // else {
+    //     auto dataset = (half*)base_index->get_xb(numeric_type);
+    //     index_ = std::make_shared<CuvsCagra<half>>(
+    //         this->resources_.get(),
+    //         this->d,
+    //         index->ntotal,
+    //         hnsw.nb_neighbors(0),
+    //         dataset,
+    //         knn_graph.data(),
+    //         this->metric_type,
+    //         this->metric_arg,
+    //         INDICES_64_BIT);
+    // }
 
     this->is_trained = true;
 }
 
-void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index) const {
-    FAISS_ASSERT(index_ && this->is_trained && index);
+void GpuIndexCagra::copyFrom(const faiss::IndexHNSWCagra* index) {
+    FAISS_THROW_MSG("GpuIndexCagra copyFrom throw message");
+    // copyFrom(index, NumericType::Float32);
+}
+
+void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index, NumericType numeric_type) const {
+    FAISS_ASSERT(!std::holds_alternative<std::monostate>(index_) && this->is_trained && index);
 
     DeviceScope scope(config_.device);
 
@@ -215,7 +319,18 @@ void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index) const {
     // cpuIndex instead of copying fields
     index->ntotal = 0;
 
-    auto graph_degree = index_->get_knngraph_degree();
+    // auto graph_degree = index_->get_knngraph_degree();
+
+    auto graph_degree = std::visit([](auto&& index_ptr) -> idx_t {
+        using IndexPtrT = std::decay_t<decltype(index_ptr)>;
+        if constexpr (std::is_same_v<IndexPtrT, std::monostate>) {
+            FAISS_THROW_MSG("Index not initialized when accessing knngraph_degree.");
+        } else {
+            return index_ptr->get_knngraph_degree();
+        }
+    }, index_);
+    
+    
     auto M = graph_degree / 2;
     if (index->storage and index->own_fields) {
         delete index->storage;
@@ -234,32 +349,97 @@ void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index) const {
     index->hnsw.set_default_probas(M, 1.0 / log(M));
 
     auto n_train = this->ntotal;
-    float* train_dataset;
-    auto dataset = index_->get_training_dataset();
+
+    // data_t* train_dataset;
+    // auto dataset = index_->get_training_dataset();
     bool allocation = false;
-    if (getDeviceForAddress(dataset) >= 0) {
-        train_dataset = new float[n_train * index->d];
-        allocation = true;
-        raft::copy(
+    // if (getDeviceForAddress(dataset) >= 0) {
+    //     train_dataset = new data_t[n_train * index->d];
+    //     allocation = true;
+    //     raft::copy(
+    //             train_dataset,
+    //             dataset,
+    //             n_train * index->d,
+    //             this->resources_->getRaftHandleCurrentDevice().get_stream());
+    // } else {
+    //     train_dataset = const_cast<data_t*>(dataset);
+    // }
+
+    // // turn off as level 0 is copied from CAGRA graph
+    // index->init_level0 = false;
+    // if (!index->base_level_only) {
+    //     index->add(n_train, train_dataset);
+    // } else {
+    //     index->hnsw.prepare_level_tab(n_train, false);
+    //     index->storage->add(n_train, train_dataset);
+    //     index->ntotal = n_train;
+    // }
+    // if (allocation) {
+    //     delete[] train_dataset;
+    // }
+    if (numeric_type == NumericType::Float32) {
+        // auto* index = std::get<std::shared_ptr<CuvsCagra<float>>>(index_).get();
+        auto dataset = std::get<std::shared_ptr<CuvsCagra<float>>>(index_)->get_training_dataset();
+        float* train_dataset = nullptr;
+    
+        if (getDeviceForAddress(dataset) >= 0) {
+            train_dataset = new float[n_train * index->d];
+            allocation = true;
+            raft::copy(
                 train_dataset,
                 dataset,
                 n_train * index->d,
                 this->resources_->getRaftHandleCurrentDevice().get_stream());
-    } else {
-        train_dataset = const_cast<float*>(dataset);
-    }
-
-    // turn off as level 0 is copied from CAGRA graph
-    index->init_level0 = false;
-    if (!index->base_level_only) {
-        index->add(n_train, train_dataset);
-    } else {
-        index->hnsw.prepare_level_tab(n_train, false);
-        index->storage->add(n_train, train_dataset);
-        index->ntotal = n_train;
-    }
-    if (allocation) {
-        delete[] train_dataset;
+        } else {
+            train_dataset = const_cast<float*>(dataset);
+        }
+    
+        // turn off as level 0 is copied from CAGRA graph
+        index->init_level0 = false;
+        if (!index->base_level_only) {
+            index->add(n_train, train_dataset);
+        } else {
+            index->hnsw.prepare_level_tab(n_train, false);
+            index->storage->add(n_train, train_dataset);
+            index->ntotal = n_train;
+        }
+    
+        if (allocation) {
+            delete[] train_dataset;
+        }
+    
+    } 
+    // else if (numeric_type == NumericType::Float16) {
+    //     auto dataset = std::get<std::shared_ptr<CuvsCagra<half>>>(index_)->get_training_dataset();
+    //     half* train_dataset = nullptr;
+    
+    //     if (getDeviceForAddress(dataset) >= 0) {
+    //         train_dataset = new half[n_train * index->d];
+    //         allocation = true;
+    //         raft::copy(
+    //             train_dataset,
+    //             dataset,
+    //             n_train * index->d,
+    //             this->resources_->getRaftHandleCurrentDevice().get_stream());
+    //     } else {
+    //         train_dataset = const_cast<half*>(dataset);
+    //     }
+    
+    //     index->init_level0 = false;
+    //     if (!index->base_level_only) {
+    //         index->add(n_train, static_cast<const void*>(train_dataset), NumericType::Float16);
+    //     } else {
+    //         index->hnsw.prepare_level_tab(n_train, false);
+    //         index->storage->add(n_train, static_cast<const void*>(train_dataset), NumericType::Float16);
+    //         index->ntotal = n_train;
+    //     }
+    
+    //     if (allocation) {
+    //         delete[] train_dataset;
+    //     }
+    // } 
+    else {
+        FAISS_THROW_MSG("Unsupported numeric type for training dataset copy.");
     }
 
     auto graph = get_knngraph();
@@ -277,11 +457,24 @@ void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index) const {
     index->init_level0 = true;
 }
 
+void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index) const {
+    FAISS_THROW_MSG("GpuIndexCagra copyTo throw message");
+    // GpuIndexCagra::copyTo(index, NumericType::Float32);
+}
+
 void GpuIndexCagra::reset() {
     DeviceScope scope(config_.device);
 
-    if (index_) {
-        index_->reset();
+    if (!std::holds_alternative<std::monostate>(index_)) {
+        // index_->reset();
+        std::visit([](auto& index_ptr) {
+            using IndexPtrT = std::decay_t<decltype(index_ptr)>;
+            if constexpr (std::is_same_v<IndexPtrT, std::monostate>) {
+                FAISS_THROW_MSG("Index not initialized when accessing knngraph_degree.");
+            } else {
+                return index_ptr->reset();
+            }
+        }, index_);
         this->ntotal = 0;
         this->is_trained = false;
     } else {
@@ -290,9 +483,20 @@ void GpuIndexCagra::reset() {
 }
 
 std::vector<idx_t> GpuIndexCagra::get_knngraph() const {
-    FAISS_ASSERT(index_ && this->is_trained);
+    FAISS_ASSERT(!std::holds_alternative<std::monostate>(index_) && this->is_trained);
 
-    return index_->get_knngraph();
+    // return index_->get_knngraph();
+
+    return std::visit([](auto&& index_ptr) -> std::vector<idx_t> {
+        using IndexPtrT = std::decay_t<decltype(index_ptr)>;
+
+        if constexpr (std::is_same_v<IndexPtrT, std::monostate>) {
+            FAISS_THROW_MSG("Index not initialized when accessing knngraph_degree.");
+        } else {
+            return index_ptr->get_knngraph();
+        }
+
+    }, index_);
 }
 
 } // namespace gpu

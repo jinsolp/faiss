@@ -62,6 +62,29 @@ struct IndexFlat : IndexFlatCodes {
         return (const float*)codes.data();
     }
 
+    // // need to cast on user side after calling this func
+    // void* get_xb(NumericType numeric_type) {
+    //     switch (numeric_type) {
+    //         case NumericType::Float32:
+    //             return (float*)codes.data();
+    //         case NumericType::Float16:
+    //             return (half*)codes.data();
+    //         default:
+    //             return nullptr;  // or throw
+    //     }
+    // }
+    
+    // const void* get_xb(NumericType numeric_type) const {
+    //     switch (numeric_type) {
+    //         case NumericType::Float32:
+    //             return (const float*)codes.data();
+    //         case NumericType::Float16:
+    //             return (const half*)codes.data();
+    //         default:
+    //             return nullptr;
+    //     }
+    // }
+
     IndexFlat() {}
 
     FlatCodesDistanceComputer* get_FlatCodesDistanceComputer() const override;

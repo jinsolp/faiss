@@ -23,6 +23,7 @@
 
 #pragma once
 
+// #include <bits/stdint-intn.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/gpu/GpuIndex.h>
 #include <faiss/gpu/GpuIndexIVFPQ.h>
@@ -312,7 +313,8 @@ struct GpuIndexCagra : public GpuIndex {
     std::variant<
             std::monostate,
             std::shared_ptr<CuvsCagra<float>>,
-            std::shared_ptr<CuvsCagra<half>>>
+            std::shared_ptr<CuvsCagra<half>>,
+            std::shared_ptr<CuvsCagra<int8_t>>>
             index_;
 };
 

@@ -47,6 +47,9 @@ def _numeric_to_str(numeric_type):
         return 'float32'
     elif numeric_type == faiss.Float16:
         return 'float16'
+    elif numeric_type == faiss.Int8:
+        print("numeric type is int8")
+        return 'int8'
     else:
         raise ValueError("numeric type must be either faiss.Float32 or faiss.Float16 ")
 

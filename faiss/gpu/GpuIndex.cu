@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+// #include <bits/stdint-intn.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
 #include <faiss/IndexIVFPQ.h>
@@ -194,6 +195,8 @@ void GpuIndex::addPaged_(
         dispatch(float{});
     } else if (numeric_type == NumericType::Float16) {
         dispatch(half{});
+    } else if (numeric_type == NumericType::Int8) {
+        dispatch(int8_t{});
     } else {
         FAISS_THROW_MSG("GpuIndex::addPaged_: Unsupported numeric type");
     }
@@ -251,6 +254,8 @@ void GpuIndex::addPage_(
         dispatch(float{});
     } else if (numeric_type == NumericType::Float16) {
         dispatch(half{});
+    } else if (numeric_type == NumericType::Int8) {
+        dispatch(int8_t{});
     } else {
         FAISS_THROW_MSG("GpuIndex::addPage_: Unsupported numeric type");
     }
@@ -420,6 +425,22 @@ void GpuIndex::searchNonPaged_(
                 outDistancesData,
                 outIndicesData,
                 params);
+    } else if (numeric_type == NumericType::Int8) {
+        auto vecs = toDeviceTemporary<int8_t, 2>(
+                resources_.get(),
+                config_.device,
+                const_cast<int8_t*>(static_cast<const int8_t*>(x)),
+                stream,
+                {n, this->d});
+
+        searchImplEx_(
+                n,
+                static_cast<const void*>(vecs.data()),
+                numeric_type,
+                k,
+                outDistancesData,
+                outIndicesData,
+                params);
     } else {
         FAISS_THROW_MSG("GpuIndex::search: Unsupported numeric type");
     }
@@ -485,6 +506,16 @@ void GpuIndex::searchFromCpuPaged_(
                         num,
                         static_cast<const void*>(
                                 static_cast<const half*>(x) + cur * this->d),
+                        numeric_type,
+                        k,
+                        outDistancesSlice.data(),
+                        outIndicesSlice.data(),
+                        params);
+            } else if (numeric_type == NumericType::Int8) {
+                searchNonPaged_(
+                        num,
+                        static_cast<const void*>(
+                                static_cast<const int8_t*>(x) + cur * this->d),
                         numeric_type,
                         k,
                         outDistancesSlice.data(),
@@ -646,6 +677,8 @@ void GpuIndex::searchFromCpuPaged_(
         dispatch(float{});
     } else if (numeric_type == NumericType::Float16) {
         dispatch(half{});
+    } else if (numeric_type == NumericType::Int8) {
+        dispatch(int8_t{});
     } else {
         FAISS_THROW_MSG(
                 "GpuIndex::searchFromCpuPaged_: Unsupported numeric type");

@@ -21,7 +21,6 @@
  * limitations under the License.
  */
 
-// #include <bits/stdint-intn.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/gpu/GpuIndexCagra.h>
 #include <faiss/gpu/StandardGpuResources.h>

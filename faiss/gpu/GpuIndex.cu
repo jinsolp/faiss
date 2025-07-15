@@ -5,7 +5,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// #include <bits/stdint-intn.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
 #include <faiss/IndexIVFPQ.h>

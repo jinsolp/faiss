@@ -23,7 +23,6 @@
 
 #pragma once
 
-// #include <bits/stdint-intn.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/gpu/GpuIndex.h>
 #include <faiss/gpu/GpuIndexIVFPQ.h>

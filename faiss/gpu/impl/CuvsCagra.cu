@@ -34,40 +34,6 @@
 namespace faiss {
 namespace gpu {
 
-template <class T, class OutStream>
-void print_host_vector(
-        const char* variable_name,
-        const T* host_mem,
-        size_t componentsCount,
-        OutStream& out) {
-    out << variable_name << "=[";
-    for (size_t i = 0; i < componentsCount; ++i) {
-        if (i != 0)
-            out << ",";
-        if constexpr (std::is_same_v<T, half>) {
-            out << __half2float(host_mem[i]);
-        } else {
-            out << host_mem[i];
-        }
-    }
-    out << "];" << std::endl;
-}
-
-template <class T, class OutStream>
-void print_device_vector(
-        const char* variable_name,
-        const T* devMem,
-        size_t componentsCount,
-        OutStream& out) {
-    auto host_mem = std::make_unique<T[]>(componentsCount);
-    RAFT_CUDA_TRY(cudaMemcpy(
-            host_mem.get(),
-            devMem,
-            componentsCount * sizeof(T),
-            cudaMemcpyDeviceToHost));
-    print_host_vector(variable_name, host_mem.get(), componentsCount, out);
-}
-
 template <typename data_t>
 CuvsCagra<data_t>::CuvsCagra(
         GpuResources* resources,
@@ -321,11 +287,6 @@ void CuvsCagra<data_t>::search(
             queries_view,
             indices_copy.view(),
             distances_view);
-    raft::print_device_vector(
-            "distances view after cagra search",
-            distances_view.data_handle(),
-            10,
-            std::cout);
     thrust::copy(
             raft::resource::get_thrust_policy(raft_handle),
             indices_copy.data_handle(),

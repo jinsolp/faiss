@@ -26,7 +26,6 @@
 #include <faiss/gpu/StandardGpuResources.h>
 #include <cstddef>
 #include <faiss/gpu/impl/CuvsCagra.cuh>
-#include <iostream>
 #include <optional>
 #include <type_traits>
 
@@ -126,7 +125,6 @@ void GpuIndexCagra::trainEx(idx_t n, const void* x, NumericType numeric_type) {
         std::get<std::shared_ptr<CuvsCagra<half>>>(index_)->train(
                 n, static_cast<const half*>(x));
     } else if (numeric_type == NumericType::Int8) {
-        std::cout << "training with int8\n";
         index_ = std::make_shared<CuvsCagra<int8_t>>(
                 this->resources_.get(),
                 this->d,
@@ -245,7 +243,6 @@ void GpuIndexCagra::searchImplEx_(
                 params->num_random_samplings,
                 params->seed);
     } else if (numeric_type == NumericType::Int8) {
-        std::cout << "calling int8 searchImplEx_\n";
         Tensor<int8_t, 2, true> queries(
                 const_cast<int8_t*>(static_cast<const int8_t*>(x)),
                 {n, this->d});

@@ -46,8 +46,15 @@ class TestComputeGT(unittest.TestCase):
         cagraIndexConfig.build_algo = faiss.graph_build_algo_IVF_PQ
 
         index = faiss.GpuIndexCagra(res, d, metric, cagraIndexConfig)
+<<<<<<< HEAD
         index.train(data_base_nt, numeric_type=numeric_type)
         Dnew, Inew = index.search(data_query_nt, k, numeric_type=numeric_type)
+=======
+        database = ds.get_database().astype(np.float16) if numeric_type == faiss.Float16  else ds.get_database()
+        index.train(database, numeric_type=numeric_type)
+        queries = ds.get_queries().astype(np.float16) if numeric_type == faiss.Float16 else ds.get_queries()
+        Dnew, Inew = index.search(queries, k, numeric_type=numeric_type)
+>>>>>>> main
         
         evaluation.check_ref_knn_with_draws(Dref, Iref, Dnew, Inew, k)
 
